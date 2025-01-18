@@ -20,10 +20,15 @@ Save the processed videos and screenshots for review.
 ![image](https://github.com/user-attachments/assets/41f35602-09e7-49b1-9339-aea401087d41)
 
 Video Upload: Upload videos in formats such as .mp4, .mov, .mkv, etc.
+
 Pose Estimation: Detect 18 keypoints of the human body, including joints and facial landmarks.
+
 Real-Time Processing: Optimized for GPU acceleration with TensorFlow for faster processing.
+
 Output Visualization: View and download processed videos with skeleton overlays.
+
 Screenshots: Save periodic screenshots of the processed videos for analysis.
+
 Privacy First: Processes keypoints only, without storing raw video frames.
 
 # Technology Stack
