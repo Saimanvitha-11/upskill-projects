@@ -116,6 +116,8 @@ TensorFlow processes video frames to generate confidence maps and part affinity 
 Keypoints are extracted and connected to form a skeleton overlay.
 
 # Output Generation:
+![image](https://github.com/user-attachments/assets/a852afe6-f0ac-4f75-b71e-f7d047b22d2d)
+
 Processed video with skeleton overlays.
 
 Periodic screenshots of annotated frames.
