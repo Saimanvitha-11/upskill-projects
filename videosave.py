@@ -1,8 +1,10 @@
 import cv2
 import os
 import numpy as np
+from sort.sort import Sort  # Sorting library for tracking multiple people
+from skimage import io
 
-# Define body parts and pose pairs
+# Define body parts and pose pairs (ensure this is defined before use)
 BODY_PARTS = { 
     "Nose": 0, "Neck": 1, "RShoulder": 2, "RElbow": 3, "RWrist": 4,
     "LShoulder": 5, "LElbow": 6, "LWrist": 7, "RHip": 8, "RKnee": 9,
@@ -21,7 +23,14 @@ POSE_PAIRS = [
 COLORS = {part: (np.random.randint(0, 255), np.random.randint(0, 255), np.random.randint(0, 255)) for part in BODY_PARTS}
 
 # Load the pre-trained model
-net = cv2.dnn.readNetFromTensorflow("graph_opt.pb")
+try:
+    net = cv2.dnn.readNetFromTensorflow("graph_opt.pb")
+    print("Model loaded successfully")
+except Exception as e:
+    print(f"Error loading model: {e}")
+
+# Initialize the tracker (SORT)
+tracker = Sort()
 
 def process_videos(input_dir, output_dir):
     if not os.path.exists(output_dir):
@@ -48,55 +57,81 @@ def process_videos(input_dir, output_dir):
         frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
 
         frame_count = 0
         while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
+            try:
+                ret, frame = cap.read()
+                if not ret:
+                    raise ValueError("Error reading frame from video")
 
-            frame_count += 1
-            net.setInput(cv2.dnn.blobFromImage(frame, 1.0, (368, 368), (127.5, 127.5, 127.5), swapRB=True, crop=False))
-            out_blob = net.forward()
-            out_blob = out_blob[:, :19, :, :]
+                frame_count += 1
 
-            points = []
-            for i, part in enumerate(BODY_PARTS.keys()):
-                if part == "Background":
-                    continue
-                heatMap = out_blob[0, i, :, :]
-                _, conf, _, point = cv2.minMaxLoc(heatMap)
-                x = int((frame_width * point[0]) / out_blob.shape[3])
-                y = int((frame_height * point[1]) / out_blob.shape[2])
-                points.append((x, y) if conf > 0.2 else None)
+                # Display processing information on the frame
+                progress_text = f"Processing frame {frame_count}/{total_frames}"
+                cv2.putText(frame, progress_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
 
-                if conf > 0.2:
-                    cv2.putText(frame, part, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLORS[part], 2, cv2.LINE_AA)
+                net.setInput(cv2.dnn.blobFromImage(frame, 1.0, (368, 368), (127.5, 127.5, 127.5), swapRB=True, crop=False))
+                out_blob = net.forward()
+                out_blob = out_blob[:, :19, :, :]
 
-            for pair in POSE_PAIRS:
-                partFrom, partTo = pair
-                idFrom = BODY_PARTS[partFrom]
-                idTo = BODY_PARTS[partTo]
+                points = []
+                detections = []
+                for i, part in enumerate(BODY_PARTS.keys()):
+                    if part == "Background":
+                        continue
+                    heatMap = out_blob[0, i, :, :]
+                    _, conf, _, point = cv2.minMaxLoc(heatMap)
+                    x = int((frame_width * point[0]) / out_blob.shape[3])
+                    y = int((frame_height * point[1]) / out_blob.shape[2])
+                    points.append((x, y) if conf > 0.3 else None)
 
-                if points[idFrom] and points[idTo]:
-                    cv2.line(frame, points[idFrom], points[idTo], COLORS[partFrom], 3)
-                    cv2.ellipse(frame, points[idFrom], (5, 5), 0, 0, 360, COLORS[partFrom], cv2.FILLED)
-                    cv2.ellipse(frame, points[idTo], (5, 5), 0, 0, 360, COLORS[partTo], cv2.FILLED)
+                    if conf > 0.3:
+                        # Confidence score display
+                        cv2.putText(frame, f"{part}: {conf:.2f}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLORS[part], 2, cv2.LINE_AA)
+                        # Detection for SORT (4 values for bbox)
+                        detections.append([x, y, 10, 10])  # 10x10 as a placeholder size for tracking
 
-            out.write(frame)
+                # Update trackers with new detections
+                trackers = tracker.update(np.array(detections))
+                for tracker_info in trackers:
+                    tracker_id = int(tracker_info[4])  # Get unique ID from SORT
+                    x1, y1, x2, y2 = map(int, tracker_info[:4])
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.putText(frame, f"ID: {tracker_id}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2, cv2.LINE_AA)
 
-            # Save a screenshot every 2 seconds
-            if frame_count % int(fps * 1) == 0:
-                screenshot_path = os.path.join(screenshot_dir, f"{os.path.splitext(video_file)[0]}_frame_{frame_count}.png")
-                cv2.imwrite(screenshot_path, frame)
+                # Draw skeleton layout
+                for pair in POSE_PAIRS:
+                    partA, partB = pair
+                    if points[BODY_PARTS[partA]] and points[BODY_PARTS[partB]]:
+                        cv2.line(frame, points[BODY_PARTS[partA]], points[BODY_PARTS[partB]], (0, 255, 255), 2)
+                        cv2.circle(frame, points[BODY_PARTS[partA]], 4, (0, 0, 255), -1)
+                        cv2.circle(frame, points[BODY_PARTS[partB]], 4, (0, 0, 255), -1)
 
-            # Display the live processed video
-            cv2.imshow('Processed Video', frame)
+                # Save the processed frame to output video
+                out.write(frame)
 
-            # Exit on 'q' key press
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+                # Save screenshots every 2 seconds
+                if frame_count % int(fps * 2) == 0:
+                    screenshot_path = os.path.join(screenshot_dir, f"{os.path.splitext(video_file)[0]}_frame_{frame_count}.png")
+                    cv2.imwrite(screenshot_path, frame)
+
+                # Display the live processed video
+                display_height = 720
+                aspect_ratio = frame_width / frame_height
+                display_width = int(display_height * aspect_ratio)
+                resized_frame = cv2.resize(frame, (display_width, display_height))
+                cv2.imshow('Processed Video', resized_frame)
+
+                # Exit on 'q' key press
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
+            except Exception as e:
+                print(f"Error in frame processing: {e}")
                 break
 
         cap.release()
@@ -107,7 +142,7 @@ def process_videos(input_dir, output_dir):
     print(f"Screenshots saved in: {screenshot_dir}")
 
 # Define directories
-input_dir = "L:/STUDYYYY/Project/uploads"
-output_dir = "L:/STUDYYYY/Project/outputs"
+input_dir = "L:/STUDYYYY/pose estimation/uploads"
+output_dir = "L:/STUDYYYY/pose estimation/outputs"
 
 process_videos(input_dir, output_dir)
